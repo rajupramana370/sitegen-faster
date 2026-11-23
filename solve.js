@@ -861,21 +861,33 @@ export function build(input) {
     bySource.set(s.path, s);
   }
 
-  // 4. Markdown, links resolved.
+  // 4. Markdown, links resolved (resolutions memoised per case).
   const staticPaths = new Set(statics.map((f) => f.path));
+  const resolveCache = new Map();
   for (const s of kept) {
     const dir = dirOf(s.path);
     const env = {
       link: (target) => {
         if (SCHEME.test(target) || target.startsWith('/') || target.startsWith('#')) return target;
+        const key = `${dir}\n${target}`;
+        const hit = resolveCache.get(key);
+        if (hit !== undefined) {
+          if (hit === null) broken.add(`broken-link ${s.path} -> ${target}`);
+          return hit === null ? target : hit;
+        }
         const hash = target.indexOf('#');
         const rel = hash === -1 ? target : target.slice(0, hash);
         const frag = hash === -1 ? '' : target.slice(hash);
         const path = rel === '' ? null : resolvePath(dir, rel);
-        if (path !== null && bySource.has(path)) return `${bySource.get(path).url}${frag}`;
-        if (path !== null && staticPaths.has(path)) return `${base}/${path}${frag}`;
-        broken.add(`broken-link ${s.path} -> ${target}`);
-        return target;
+        let resolved = null;
+        if (path !== null && bySource.has(path)) resolved = `${bySource.get(path).url}${frag}`;
+        else if (path !== null && staticPaths.has(path)) resolved = `${base}/${path}${frag}`;
+        resolveCache.set(key, resolved);
+        if (resolved === null) {
+          broken.add(`broken-link ${s.path} -> ${target}`);
+          return target;
+        }
+        return resolved;
       },
     };
     const md = renderMarkdown(s.body, env);
